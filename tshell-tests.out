@@ -1,0 +1,43 @@
+started [1] echo "test 1"
+test 1
+finished [1] echo "test 1"
+started [2] echo "hi mom!"
+hi mom!
+finished [2] echo "hi mom!"
+started [3] echo "test 2: 1" 2 3
+test 2: 1 2 3
+finished [3] echo "test 2: 1" 2 3
+started [4] mkdir -p tmp
+finished [4] mkdir -p tmp
+started [5] ls -1 -a tmp
+finished [5] ls -1 -a tmp
+started [6] cat tmp/files.txt
+.
+..
+files.txt
+finished [6] cat tmp/files.txt
+started [7] rm tmp/files.txt
+finished [7] rm tmp/files.txt
+started [8] rmdir tmp
+finished [8] rmdir tmp
+started [9] echo "hi mom!"
+finished [9] echo "hi mom!"
+test 3: captured "hi mom!"
+started [10] head -1
+import { cmd, exec, output, shell, subshell } from './tshell'
+finished [10] head -1
+started [11] bash -c "exit 1"
+TestListenerOne: failed [11] bash -c "exit 1": 1
+TestListenerTwo: failed [11] bash -c "exit 1": 1
+test 4: ExitError 1
+started [12] bash -c "exit 1"
+finished [12] bash -c "exit 1": 1
+test 5: status 1
+started [13] ()
+started [1] bash -c "exit 2"
+started [1] bash -c "exit 2"
+finished [1] bash -c "exit 2": 2
+finished [1] bash -c "exit 2": 2
+test 6: nested status: 2
+test 7: status: 3
+finished [13] (): 3

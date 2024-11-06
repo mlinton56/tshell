@@ -1,0 +1,20 @@
+{
+    "compilerOptions": {
+        "resolveJsonModule": true,
+        "esModuleInterop": true,
+        "target": "es2020",
+        "outDir": "./node_modules/tshell/",
+        "incremental": true,
+        "sourceMap": true,
+        "alwaysStrict": true,
+        "module": "commonjs",
+        "noImplicitAny": false,
+        "removeComments": true,
+        "pretty": false,
+        "types": ["node"]
+    },
+    "files": [
+        "tshell.ts",
+        "tshell-tests.ts"
+    ]
+}
