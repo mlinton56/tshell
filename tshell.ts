@@ -170,59 +170,82 @@ export type Stream = any
  * Optional context information for running a command.
  */
 export class Context {
+
     dir?: string
     env?: object
     throwFlag?: boolean
     traceFlag?: boolean
     detachedFlag?: boolean
 
+    stdin?: string | Stream
+    stdout?: string | Stream
+    stderr?: string | Stream
+    stdouterr?: string | Stream
+    appendout?: string | Stream
+    appenderr?: string | Stream
+    appendouterr?: string | Stream
+    
     '<'?: string | Stream
     '>'?: string | Stream
-    '>&'?: string | Stream
+    '2>'?: string | Stream
     '>>'?: string | Stream
+    '2>>'?: string | Stream
+    '&>'?: string | Stream
+    '>&'?: string | Stream
+    '&>>'?: string | Stream
     '>>&'?: string | Stream
 
     listener?: ShellListener
     listeners?: ShellListener[]
+
+    static fromArg(c: Context): Context {
+
+        for (const key of Object.keys(c)) {
+            const attr = redirShortcutMap.get(key)
+            if (attr) {
+                c[attr] = c[key]
+            }
+        }
+        return c
+    }
+
 }
 
-const contextSimpleProps = [
-    'dir', 'throwFlag', 'traceFlag', 'detachedFlag', '<', '>', '>&', '>>', '>>&'
-]
-
+const redirShortcutMap = new Map<string, string>([
+    ['<', 'stdin'], ['>', 'stdout'], ['2>', 'stderr'],
+    ['>>', 'apppendout'], ['2>>', 'appenderr'],
+    ['&>', 'stdouterr'], ['>&', 'stdouterr'],
+    ['&>>', 'appendouterr'], ['>>&', 'appendouterr']
+])
 
 /**
  * We would like to call exec and output with a variable number of strings and
  * an optional context, but TypeScript (and most languages) can't handle that.
  * So we pass a variable number of ExecArg arguments, where ExecArg is
- * a string or context, and have a helper function to convert ExecArg[] to
- * [string[], Context].
+ * a string or context, and convert ExecArg[] to [string[], Context].
  */
 export type ExecArg = string | Context
 type ExecArgs = [string[], Context]
 
-function execArgs(arglist: ExecArg[]): ExecArgs {
-    let args
-    let context
-
+function execArgs(arglist: ExecArg[]): [string[], Context] {
     if (arglist.length > 0) {
-        let n = arglist.length - 1
-        if (typeof arglist[n] === 'string') {
-            args = <string[]>arglist
-        } else {
-            args = <string[]>arglist.slice(0, -1)
-            context = arglist[n] as Context
-        }
-
-        // Sigh.
-        for (let i = 0; i < args.length; ++i) {
-            if (typeof args[i] !== 'string') {
-                throw new TypeError('args[' + i + ']: string required')
+        const lastArgIndex = arglist.length - 1
+        for (let i = 0; i < lastArgIndex; ++i) {
+            if (typeof arglist[i] !== 'string') {
+                throw new TypeError(`arglist[${i}]: string required`)
             }
         }
+
+        const lastArg = arglist[lastArgIndex]
+        if (typeof lastArg === 'string') {
+            return [arglist as string[], undefined]
+        }
+
+        const args = arglist.slice(0, -1) as string[]
+        return [args, Context.fromArg(lastArg as Context)]
     }
 
-    return [args, context]
+    return [[], undefined]
 }
 
 /**
@@ -230,7 +253,7 @@ function execArgs(arglist: ExecArg[]): ExecArgs {
  *
  * This function is primarily useful for redirection, e.g.,
  *
- *     exec('ls', { '>': 'filelist.txt' })
+ *     exec('ls', {'>': 'filelist.txt'})
  */
 export function exec(p: Program, ...arglist: ExecArg[]): ShellPromise {
     const [args, context] = execArgs(arglist)
@@ -238,7 +261,7 @@ export function exec(p: Program, ...arglist: ExecArg[]): ShellPromise {
 }
 
 /**
- * Run a program with the given arguments and return the output (stdout).
+ * Run a program with the given arguments and return stdout as a string.
  */
 export function output(p: Program, ...arglist: ExecArg[]): Promise<string> {
     const sh = current
@@ -439,11 +462,13 @@ class ShellImpl implements Shell {
             throwFlag: true,
             traceFlag: false,
             detachedFlag: false,
-            '<': null,
-            '>': null,
-            '>&': null,
-            '>>': null,
-            '>>&': null
+            stdin: null,
+            stdout: null,
+            stderr: null,
+            stdouterr: null,
+            appendout: null,
+            appenderr: null,
+            appendouterr: null
         })
 
         sh.stdin = process.stdin
@@ -530,7 +555,7 @@ class ShellImpl implements Shell {
         switch (typeof p) {
         case 'string':
             // Create a task spawns a child process.
-            return ChildTask.initial(this, <string>p, job)
+            return ChildTask.initial(this, p as string, job)
 
         case 'function':
             // Task runs ShellFunc body in new shell.
@@ -560,7 +585,7 @@ abstract class CmdTask {
 
     protected resolveFunc: (result: ExitStatus) => void
     protected rejectFunc: (err: Error) => void
-    protected get errorFunc() { return (err: Error) => this.errorNotify(err) }
+    protected errorFunc: (err: Error) => void = this.errorNotify.bind(this)
 
 
     /**
@@ -574,7 +599,6 @@ abstract class CmdTask {
         this.stdio = [sh.stdin, sh.stdout, sh.stderr]
     }
 
-
     /**
      * Captured is a public string attribute that reflects the aggregate value
      * of the protected output property.
@@ -585,7 +609,6 @@ abstract class CmdTask {
     set captured(c: string) {
         this.output = c ? [c] : []
     }
-
 
     /**
      * Return a promise for the task.
@@ -614,7 +637,7 @@ abstract class CmdTask {
      * to child.stdin.
      */
     private redirectInput(): void {
-        const s = this.context['<']
+        const s = this.context.stdin
         if (!s) {
             this.redirectOutput()
             return
@@ -651,7 +674,7 @@ abstract class CmdTask {
     }
 
     private redirectOutput(): void {
-        const both = this.ostream('>>&', '>&')
+        const both = this.ostream('appendouterr', 'stdouterr')
         if (both) {
             both.on('open', (fd) => {
                 this.stdio[1] = both
@@ -659,7 +682,7 @@ abstract class CmdTask {
                 this.run()
             })
         } else {
-            const s = this.ostream('>>', '>')
+            const s = this.ostream('appendout', 'stdout')
             if (s) {
                 s.on('open', (fd) => {
                     this.stdio[1] = s
@@ -672,7 +695,7 @@ abstract class CmdTask {
     }
 
     private redirectError(): void {
-        const s = this.ostream('2>>', '2>')
+        const s = this.ostream('appenderr', 'stderr')
         if (s) {
             s.on('open', (fd) => {
                 this.stdio[2] = s
@@ -687,7 +710,7 @@ abstract class CmdTask {
         const sa = this.context[a]
         if (sa) {
             if (typeof sa === 'string') {
-                return this.checked(fs.createWriteStream(sa, { flags: 'a' }))
+                return this.tracked(fs.createWriteStream(sa, {flags: 'a'}))
             }
 
             return sa
@@ -695,13 +718,13 @@ abstract class CmdTask {
 
         const sw = this.context[w]
         if (typeof sw === 'string') {
-            return this.checked(fs.createWriteStream(sw))
+            return this.tracked(fs.createWriteStream(sw))
         }
 
         return sw
     }
 
-    private checked(s: Stream): Stream {
+    private tracked(s: Stream): Stream {
         s.on('error', this.errorFunc)
         return s
     }
@@ -737,7 +760,7 @@ abstract class CmdTask {
         } else {
             let err: Error
             if (typeof s === 'number') {
-                err = new ExitError(this.cmdline(), <number>s)
+                err = new ExitError(this.cmdline(), s as number)
             } else {
                 err = s as Error
             }
@@ -806,7 +829,7 @@ class ChildTask extends CmdTask {
         // If stdout is a string array then that means we want to capture
         // the child output in the array.
         //
-        let output = this.output
+        const output = this.output
         if (output) {
             this.stdio[1] = 'pipe'
         }
