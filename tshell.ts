@@ -260,42 +260,100 @@ export function exec(p: Program, ...arglist: ExecArg[]): ShellPromise {
     return current.task(p, args, context).promise()
 }
 
+
+class CaptureOutput {
+
+    init(output: CmdOutput): void {
+        output.stdoutChunks = []
+    }
+
+    captured(output: CmdOutput): string {
+        return output.stdout()
+    }
+
+    capture(p: Program, arglist: ExecArg[]): Promise<string> {
+        const sh = current
+        const [args, context] = execArgs(arglist)
+        const task = sh.task(p, args, context)
+        const output = task.cmdOutput()
+        this.init(output)
+        return new Promise<string>((resolve, reject) => {
+            const throwFlag = sh.context.throwFlag
+
+            function returnError(err: Error): void {
+                sh.status = err
+                if (throwFlag) {
+                    reject(err)
+                } else {
+                    resolve(this.captured(task))
+                }
+            }
+
+            task.exec(
+                (status) => {
+                    if (status === 0 || !throwFlag) {
+                        sh.status = status
+                        resolve(this.captured(output))
+                    } else {
+                        returnError((typeof status === 'number') ?
+                            new ExitError(task.cmdline(), status as number) :
+                            status as Error
+                        )
+                    }
+                },
+                returnError
+            )
+        })
+    }
+
+}
+
+class CaptureCombined extends CaptureOutput {
+    init(output: CmdOutput): void {
+        output.stdoutChunks = []
+        output.combined = true
+    }
+}
+
+class CaptureErrors extends CaptureOutput {
+
+    init(output: CmdOutput): void {
+        output.stderrChunks = []
+    }
+
+    captured(output: CmdOutput): string {
+        return output.stderr()
+    }
+
+}
+
+const captureOutput = new CaptureOutput()
+const captureCombined = new CaptureCombined()
+const captureErrors = new CaptureErrors()
+
 /**
  * Run a program with the given arguments and return stdout as a string.
  */
 export function output(p: Program, ...arglist: ExecArg[]): Promise<string> {
-    const sh = current
-    const [args, context] = execArgs(arglist)
-    const task = sh.task(p, args, context)
-    task.captured = ''
-    return new Promise<string>((resolve, reject) => {
-        const throwFlag = sh.context.throwFlag
-
-        function returnError(err: Error): void {
-            sh.status = err
-            if (throwFlag) {
-                reject(err)
-            } else {
-                resolve(task.captured)
-            }
-        }
-
-        task.exec(
-            (status) => {
-                if (status === 0 || !throwFlag) {
-                    sh.status = status
-                    resolve(task.captured)
-                } else {
-                    returnError((typeof status === 'number') ?
-                        new ExitError(task.cmdline(), <number>status) :
-                        status as Error
-                    )
-                }
-            },
-            (err) => returnError(err)
-        )
-    })
+    return captureOutput.capture(p, arglist)
 }
+
+/**
+ * Run a program with the given argument and return stderr as a string.
+ */
+export function errorOutput(p: Program, ...arglist: ExecArg[]): Promise<string> {
+    return captureErrors.capture(p, arglist)
+}
+
+/**
+ * Run a program with the given arguments and return stdout+stderr as a string.
+ */
+export function combinedOutput(
+    p: Program, ...arglist: ExecArg[]
+): Promise<string> {
+    return captureCombined.capture(p, arglist)
+}
+
 
 /**
  * Return a command-line string for a given program and argument list.
@@ -569,6 +627,29 @@ class ShellImpl implements Shell {
 }
 
 /**
+ * Command output for capturing stdout and/or stderr.
+ */
+class CmdOutput {
+
+    stdoutChunks: string[]
+    stderrChunks: string[]
+    combined: boolean
+
+    stdout(): string {
+        return this.output(this.stdoutChunks)
+    }
+
+    stderr(): string {
+        return this.output(this.stderrChunks)
+    }
+
+    protected output(captured: string[]): string {
+        return captured.join('').replace(/\n+/g, ' ').trim()
+    }
+
+}
+
+/**
  * Abstract base class that encapsulates state transitions during
  * the execution of a command. The base class provides the logic
  * for redirecting I/O, which is serialized so that an error redirecting
@@ -581,8 +662,7 @@ abstract class CmdTask {
     protected context: Context
     protected stdio: (Stream | string)[]
     protected input: Stream
-    protected output: string[]
-
+    protected output: CmdOutput
     protected resolveFunc: (result: ExitStatus) => void
     protected rejectFunc: (err: Error) => void
     protected errorFunc: (err: Error) => void = this.errorNotify.bind(this)
@@ -597,21 +677,23 @@ abstract class CmdTask {
         this.job = job
         this.context = job.context
         this.stdio = [sh.stdin, sh.stdout, sh.stderr]
+        this.output = new CmdOutput()
     }
 
     /**
-     * Captured is a public string attribute that reflects the aggregate value
-     * of the protected output property.
+     * Return a command line string representing the task.
      */
-    get captured(): string {
-        return this.output.join('').replace(/\n+/g, ' ').trim()
-    }
-    set captured(c: string) {
-        this.output = c ? [c] : []
+    abstract cmdline(): string
+
+    /**
+     * Return the command output for the task.
+     */
+    cmdOutput(): CmdOutput {
+        return this.output
     }
 
     /**
-     * Return a promise for the task.
+     * Return a promise for task completion.
      */
     promise(): ShellPromise {
         return new ShellPromise((resolve, reject) => this.exec(resolve, reject))
@@ -796,9 +878,6 @@ abstract class CmdTask {
         }
     }
 
-
-    abstract cmdline(): string
-
 }
 
 /**
@@ -823,15 +902,13 @@ class ChildTask extends CmdTask {
      * Spawn a child process to run a command.
      */
     protected run(): void {
-        const context = this.context
-
-        //
-        // If stdout is a string array then that means we want to capture
-        // the child output in the array.
-        //
-        const output = this.output
-        if (output) {
+        const { sh, context, input, output } = this
+        const { stdoutChunks, stderrChunks, combined } = output
+        if (stdoutChunks) {
             this.stdio[1] = 'pipe'
+        }
+        if (stderrChunks) {
+            this.stdio[2] = 'pipe'
         }
 
         const child = child_process.spawn(this.arg0, this.args, {
@@ -840,29 +917,29 @@ class ChildTask extends CmdTask {
             stdio: this.stdio,
             detached: context.detachedFlag
         })
-
-        if (this.input) {
-            this.input.pipe(child.stdin)
-        }
-
-        // Capture the child process stdout.
-        if (output) {
-            child.stdout.on('data', (data) => output.push(data))
-        }
-
-        // Catch errors associated with redirection or startup.
+        this.job.pid = child.pid
         child.on('error', this.errorFunc)
+        if (input) {
+            input.pipe(child.stdin)
+        }
+        if (stdoutChunks) {
+            const push = stdoutChunks.push.bind(stdoutChunks)
+            child.stdout.on('data', push)
+            if (combined) {
+                child.stderr.on('data', push)
+            }
+        }
+        if (stderrChunks) {
+            child.stderr.on('data', stderrChunks.push.bind(stderrChunks))
+        }
 
-        // Wait for the child to exit and its stdio streams are closed.
         child.on('close', (code: number, signal: string) => {
             if (signal) {
-                this.returnError(this.sh, new SignalError(this.cmdline(), signal))
+                this.returnError(sh, new SignalError(this.cmdline(), signal))
             } else {
-                this.returnStatus(this.sh, code)
+                this.returnStatus(sh, code)
             }
         })
-
-        this.job.pid = child.pid
     }
 
     cmdline(): string {
