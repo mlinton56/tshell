@@ -314,6 +314,9 @@ class StdoutCapture extends GenericCapture<string> {
 
 }
 
+const stdoutCaptureInstance = new StdoutCapture()
+
+
 class StderrCapture extends GenericCapture<string> {
 
     init(output: CmdOutput): void {
@@ -326,6 +329,9 @@ class StderrCapture extends GenericCapture<string> {
 
 }
 
+const stderrCaptureInstance = new StderrCapture()
+
+
 class CombinedCapture extends StdoutCapture {
 
     init(output: CmdOutput): void {
@@ -335,7 +341,10 @@ class CombinedCapture extends StdoutCapture {
 
 }
 
-class SeparateCapture extends GenericCapture<[string, string]> {
+const combinedCaptureInstance = new CombinedCapture()
+
+
+class CapturePair extends GenericCapture<[string, string]> {
 
     init(output: CmdOutput): void {
         output.stdoutChunks = []
@@ -350,25 +359,25 @@ class SeparateCapture extends GenericCapture<[string, string]> {
 
 }
 
-const stdoutCapture = new StdoutCapture()
-const separateCapture = new SeparateCapture()
+const capturePairInstance = new CapturePair()
+
 
 const captureTypeMap = new Map< CaptureMode, GenericCapture<string> >([
-    ['stdout', stdoutCapture],
-    ['stderr', new StderrCapture()],
-    ['stdout+stderr', new CombinedCapture]
+    ['stdout', stdoutCaptureInstance],
+    ['stderr', stderrCaptureInstance],
+    ['stdout+stderr', combinedCaptureInstance]
 ])
 
 /**
  * Run a program with the given arguments and return stdout as a string.
  */
 export function output(p: Program, ...arglist: ExecArg[]): Promise<string> {
-    return stdoutCapture.capture(p, arglist)
+    return stdoutCaptureInstance.capture(p, arglist)
 }
 
 /**
  * Run a program with arguments capturing output as a string for stdout,
- * stderr, or stdout+stderr; or a pair of strings for [stdout,stderr].
+ * stderr, or stdout+stderr.
  */
 export function capture(
     mode: CaptureMode, p: Program, ...arglist: ExecArg[]
@@ -376,10 +385,13 @@ export function capture(
     return captureTypeMap.get(mode).capture(p, arglist)
 }
 
-export function captureSeparate(
+/**
+ * Run a program with arguments capturing stdout and stderr as separate strings.
+ */
+export function capturePair(
     p: Program, ...arglist: ExecArg[]
 ): Promise<[string, string]> {
-    return separateCapture.capture(p, arglist)
+    return capturePairInstance.capture(p, arglist)
 }
 
 
@@ -640,11 +652,11 @@ class ShellImpl implements Shell {
         const p = job.prog
         switch (typeof p) {
         case 'string':
-            // Create a task spawns a child process.
+            // Create a ChildTask that spawns a child process.
             return ChildTask.initial(this, p as string, job)
 
         case 'function':
-            // Task runs ShellFunc body in new shell.
+            // Create a ShellTask that runs ShellFunc body in the new shell.
             return ShellTask.initial(this, ((p as Cmd).prog) as ShellFunc, job)
 
         default:
@@ -935,7 +947,7 @@ class ChildTask extends CmdTask {
         if (stdoutChunks) {
             this.stdio[1] = 'pipe'
         }
-        if (stderrChunks) {
+        if (stderrChunks || combined) {
             this.stdio[2] = 'pipe'
         }
 
