@@ -14,26 +14,39 @@ which is either an exit code (number) or error.
 #### Commands
     import { cmd, shell, exec, output, subshell } from 'tshell'
 
-    // Run a command
-    const status = await cmd('echo')('hi mom!')
+    // Run a command.
+    await cmd('echo')('hi mom!')
 
     // Create a command and then run it.
     const echo = cmd('echo')
-    const status = await echo('hi mom!')
+    await echo('hi mom!')
 
     // Create a command with (some) arguments and run it.
     const ls = cmd('ls', '-l')
-    const status = await ls('.')
+    await ls('.')
 
-    // Non-zero exit status throws an exception by default.
+    // Handle an exception for non-zero exit status.
     try {
         await cmd('cat')('no-such-file')
     } catch (e) {
         // e is a RangeError subclass with e.code === 1
     }
 
-    // Capture output of a command
-    const out = await output(cmd(echo, 'hi mom!'))
+    // Return exit status of 1 without an exception.
+    shell().context.throwFlag = false
+    const status = await cmd('cat')('no-such-file')
+
+    // Capture stdout for a command as a string with newlines removed,
+    // returning 'hi mom!'.
+    await output(cmd(echo, 'hi mom!'))
+
+    // Capture stderr for a command as a string with newlines removed,
+    // returning 'hi mom!'.
+    await capture('stderr', bash, '>&2 echo "hi mom!"')
+
+    // Capture stdout and stderr both as one string with newlines removed,
+    // returning ['hi mom!', 'foo'].
+    await capture('stdout+stderr', bash, 'echo hi mom!; printf "%s\\n" foo >&2')
 
 #### Contexts
 When a command function is called, the configuration of the child process
@@ -43,14 +56,17 @@ the context when executing a specific command. One can use this function
 to redirect the input or output of the command.
 
     // Redirect input or output.
-    await exec(cmd(echo, 'hi mom!'), { '>': 'out.txt' })
-    await exec(cmd(sort, '-n'), { '<': 'data.txt', '>': 'sorted.txt' })
+    await exec(cmd(echo, 'hi mom!'), {'>': 'out.txt'})
+    await exec(cmd(sort, '-n'), {'<': 'data.txt', '>': 'sorted.txt'})
 
-    // Explicity modify the shell context to avoid exception.
-    const sh = shell()
-    sh.context.throwFlag = false
-    const status = await cmd('cat')('no-such-file')
-    // status === 1
+    // Also can redirect to stderr with '2>', combine stdout and stderr
+    // with '&>', and append with '>>', '2>>', and '&>>'.
+
+    // Run with a different working directory.
+    await exec(cmd('ls'), {dir: '..'})
+
+    // Run with a different environment.
+    await exec(bash, {env: {PATH: ...})
 
 #### Subshells
 The _subshell_ function handles sequential nesting by returning
