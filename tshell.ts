@@ -260,98 +260,126 @@ export function exec(p: Program, ...arglist: ExecArg[]): ShellPromise {
     return current.task(p, args, context).promise()
 }
 
+/**
+ * Encapsulate running a program and capturing the output.
+ */
+abstract class GenericCapture<T> {
 
-class CaptureOutput {
+    abstract init(output: CmdOutput): void
+    abstract resolveCaptured(resolve: (value: T) => void, output: CmdOutput): void
 
-    init(output: CmdOutput): void {
-        output.stdoutChunks = []
-    }
-
-    captured(output: CmdOutput): string {
-        return output.stdout()
-    }
-
-    capture(p: Program, arglist: ExecArg[]): Promise<string> {
+    capture(p: Program, arglist: ExecArg[]): Promise<T> {
         const sh = current
         const [args, context] = execArgs(arglist)
         const task = sh.task(p, args, context)
         const output = task.cmdOutput()
         this.init(output)
-        return new Promise<string>((resolve, reject) => {
-            const throwFlag = sh.context.throwFlag
-
-            function returnError(err: Error): void {
-                sh.status = err
-                if (throwFlag) {
-                    reject(err)
-                } else {
-                    resolve(this.captured(task))
-                }
-            }
-
+        return new Promise<T>((resolve, reject) => {
             task.exec(
-                (status) => {
-                    if (status === 0 || !throwFlag) {
+                (status: ExitStatus) => {
+                    if (status === 0 || !sh.context.throwFlag) {
                         sh.status = status
-                        resolve(this.captured(output))
+                        this.resolveCaptured(resolve, output)
+                    } else if (typeof status === 'number') {
+                        const cmdline = task.cmdline()
+                        sh.status = new ExitError(cmdline, status as number)
+                        reject(sh.status)
                     } else {
-                        returnError((typeof status === 'number') ?
-                            new ExitError(task.cmdline(), status as number) :
-                            status as Error
-                        )
+                        sh.status = status as Error
+                        reject(sh.status)
                     }
                 },
-                returnError
+                (err) => {
+                    sh.status = err
+                    reject(err)
+                }
             )
         })
     }
 
 }
 
-class CaptureCombined extends CaptureOutput {
+type CaptureMode = 'stdout' | 'stderr' | 'stdout+stderr'
+type ResolveType<T> = (value: T) => void
+
+class StdoutCapture extends GenericCapture<string> {
+
     init(output: CmdOutput): void {
         output.stdoutChunks = []
-        output.combined = true
     }
+
+    resolveCaptured(resolve: ResolveType<string>, output: CmdOutput): void {
+        resolve(output.stdout())
+    }
+
 }
 
-class CaptureErrors extends CaptureOutput {
+class StderrCapture extends GenericCapture<string> {
 
     init(output: CmdOutput): void {
         output.stderrChunks = []
     }
 
-    captured(output: CmdOutput): string {
-        return output.stderr()
+    resolveCaptured(resolve: ResolveType<string>, output: CmdOutput): void {
+        resolve(output.stderr())
     }
 
 }
 
-const captureOutput = new CaptureOutput()
-const captureCombined = new CaptureCombined()
-const captureErrors = new CaptureErrors()
+class CombinedCapture extends StdoutCapture {
+
+    init(output: CmdOutput): void {
+        super.init(output)
+        output.combined = true
+    }
+
+}
+
+class SeparateCapture extends GenericCapture<[string, string]> {
+
+    init(output: CmdOutput): void {
+        output.stdoutChunks = []
+        output.stderrChunks = []
+    }
+
+    resolveCaptured(
+        resolve: ResolveType<[string, string]>, output: CmdOutput
+    ): void {
+        resolve([output.stdout(), output.stderr()])
+    }
+
+}
+
+const stdoutCapture = new StdoutCapture()
+const separateCapture = new SeparateCapture()
+
+const captureTypeMap = new Map< CaptureMode, GenericCapture<string> >([
+    ['stdout', stdoutCapture],
+    ['stderr', new StderrCapture()],
+    ['stdout+stderr', new CombinedCapture]
+])
 
 /**
  * Run a program with the given arguments and return stdout as a string.
  */
 export function output(p: Program, ...arglist: ExecArg[]): Promise<string> {
-    return captureOutput.capture(p, arglist)
+    return stdoutCapture.capture(p, arglist)
 }
 
 /**
- * Run a program with the given argument and return stderr as a string.
+ * Run a program with arguments capturing output as a string for stdout,
+ * stderr, or stdout+stderr; or a pair of strings for [stdout,stderr].
  */
-export function errorOutput(p: Program, ...arglist: ExecArg[]): Promise<string> {
-    return captureErrors.capture(p, arglist)
-}
-
-/**
- * Run a program with the given arguments and return stdout+stderr as a string.
- */
-export function combinedOutput(
-    p: Program, ...arglist: ExecArg[]
+export function capture(
+    mode: CaptureMode, p: Program, ...arglist: ExecArg[]
 ): Promise<string> {
-    return captureCombined.capture(p, arglist)
+    return captureTypeMap.get(mode).capture(p, arglist)
+}
+
+export function captureSeparate(
+    p: Program, ...arglist: ExecArg[]
+): Promise<[string, string]> {
+    return separateCapture.capture(p, arglist)
 }
 
 
