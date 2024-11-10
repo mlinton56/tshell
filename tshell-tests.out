@@ -13,7 +13,7 @@ finished[3] 'echo "composeTest 1" 2 3'
 
 Running redirectInputTest
 started[4] "head -1"
-import { cmd, exec, output, shell, subshell } from './tshell'
+import * as tshell from './tshell'
 finished[4] "head -1"
 
 Running redirectOutputTest
@@ -34,24 +34,35 @@ finished[9] "rmdir tmp"
 Running captureTest
 started[10] 'echo "hi mom!"'
 finished[10] 'echo "hi mom!"'
-captured "hi mom!"
+captured hi mom!
+started[11] 'bash -c 'echo "hi mom!"; echo "foo"''
+finished[11] 'bash -c 'echo "hi mom!"; echo "foo"''
+captured hi mom! foo
+started[12] 'bash -c '>&2 echo "hi mom!"''
+finished[12] 'bash -c '>&2 echo "hi mom!"''
+captured hi mom!
+started[13] 'bash -c 'echo hi mom!; printf "%s\n" foo >&2''
+finished[13] 'bash -c 'echo hi mom!; printf "%s\n" foo >&2''
+captured hi mom! foo
+started[14] 'bash -c 'echo hi mom!; printf "%s\n" foo >&2''
+finished[14] 'bash -c 'echo hi mom!; printf "%s\n" foo >&2''
+[ 'hi mom!', 'foo' ]
 
 Running exitErrorTest
-started[11] 'bash -c "exit 1"'
-TestListenerOne: failed[11] 'bash -c "exit 1"': 1
-TestListenerTwo: failed[11] 'bash -c "exit 1"': 1
+started[15] 'bash -c "exit 1"'
+TestListenerOne: failed[15] 'bash -c "exit 1"': 1
+TestListenerTwo: failed[15] 'bash -c "exit 1"': 1
 ExitError 1
-started[12] 'bash -c "exit 1"'
-finished[12] 'bash -c "exit 1"': 1
+started[16] 'bash -c "exit 1"'
+finished[16] 'bash -c "exit 1"': 1
 status 1
 
 Running subshellTest
-started[13] "()"
+started[17] "()"
 started[1] 'bash -c "exit 2"'
 started[1] 'bash -c "exit 2"'
 finished[1] 'bash -c "exit 2"': 2
 finished[1] 'bash -c "exit 2"': 2
 nested status: 2
 status: 3
-
-finished[13] "()": 3
+finished[17] "()": 3
