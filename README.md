@@ -93,12 +93,19 @@ one must use the _result_ method to ensure the current context
 is properly restored before continuing after a use of await.
 
     // Multiple parallel shell context
-    await exec(subshell(async function() {
-        const sh = shell()
-        sh.context.throwFlag = true
-        if (sh.result(await echo('hi mom!')) !== 0) {
-            sh.exit(0)
-            return
-        }
-        sh.result(await echo('goodbye'))
-    }))
+    await exec(
+        subshell(
+            async function() {
+                const sh = shell()
+                sh.context.throwFlag = true
+                if (sh.result(await echo('hi mom!')) !== 0) {
+                    sh.exit(0)
+                    return
+                }
+                sh.result(await echo('goodbye'))
+            }
+        )
+    )
+
+#### ShellListener
+The shell

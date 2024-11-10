@@ -444,14 +444,16 @@ export interface Shell {
      * Set the exit status from a shell body. Note it is not sufficient
      * to call this method--one must also return from the body, e.g.,
      *
-     * await exec(subshell(() => {
-     *     if (cond) {
-     *         shell().exit(1)
-     *         return
-     *     } else {
-     *         // continue to do more
-     *     }
-     * }))
+     * await exec(
+     *     subshell(() => {
+     *         if (cond) {
+     *             shell().exit(1)
+     *             return
+     *         } else {
+     *             // continue to do more
+     *         }
+     *     })
+     * )
      */
     exit(code: number): void
 }
